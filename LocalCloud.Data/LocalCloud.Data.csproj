@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Http.Features" Version="3.1.8" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.2.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LocalCloud.Storage.Core\LocalCloud.Storage.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="ViewModels\Input\Folders\" />
+    <Folder Include="ViewModels\Input\Bin\" />
+    <Folder Include="ViewModels\Input\Auto\" />
+    <Folder Include="ViewModels\Output\Auto\" />
+    <Folder Include="ViewModels\Output\Bin\" />
+  </ItemGroup>
+
+</Project>
