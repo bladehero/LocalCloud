@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 
 namespace LocalCloud.Storage.Core
 {
-
     public class Storage : IStorage
     {
         public const char ExtensionSeparator = '.';
@@ -17,8 +16,6 @@ namespace LocalCloud.Storage.Core
         private DateRanges dateRange;
 
         public string Root { get; set; }
-        public string Bin { get; set; } = ".bin";
-        public string Auto { get; set; } = ".auto";
         public DateRanges DateRange
         {
             get => dateRange;
@@ -28,23 +25,24 @@ namespace LocalCloud.Storage.Core
                 ReorganizeAutoSystem().Wait();
             }
         }
-        public string Meta { get; set; } = ".meta";
 
-        public string PathToBin => Path.Combine(Root, Bin);
-        public string PathToAuto => Path.Combine(Root, Auto);
+        public string Meta { get; set; } = ".meta";
+        public string BinExtension { get; set; } = ".bin";
+        public string AutoExtension { get; set; } = ".auto";
+        public string PathToBin => Path.Combine(Root, BinExtension);
+        public string PathToAuto => Path.Combine(Root, AutoExtension);
+        public EntryInfo Bin => new EntryInfo(PathToBin);
+        public EntryInfo Auto => new EntryInfo(PathToAuto);
 
         public Storage(string root)
         {
             Root = root;
 
-            var bin = Path.Combine(root, Bin);
-            var auto = Path.Combine(root, Auto);
+            Bin.Create();
+            Auto.Create();
 
-            var binInfo = Directory.CreateDirectory(bin);
-            var autoInfo = Directory.CreateDirectory(auto);
-
-            _hideEntry(binInfo);
-            _hideEntry(autoInfo);
+            Bin.Hide();
+            Auto.Hide();
 
             DateRange = DateRanges.Month;
         }
@@ -52,13 +50,13 @@ namespace LocalCloud.Storage.Core
         #region Auto
         public IEnumerable<EntryInfo> GetAutoSystemEntries(DateTime? dateTime = null)
         {
-            var entry = new EntryInfo(Root, Auto, DateRange.GetPath(dateTime));
+            var entry = new EntryInfo(PathToAuto, DateRange.GetPath(dateTime));
             return GetSystemEntries(entry.RootPath);
         }
 
         public IEnumerable<string> GetAutoSystemNames(DateTime? dateTime = null)
         {
-            var entry = new EntryInfo(Root, Auto, DateRange.GetPath(dateTime));
+            var entry = new EntryInfo(PathToAuto, DateRange.GetPath(dateTime));
             return GetSystemNames(entry.RootPath);
         }
 
@@ -66,10 +64,10 @@ namespace LocalCloud.Storage.Core
         {
             var path = DateRange.GetPath(dateTime);
 
-            var directory = new EntryInfo(Root, Auto, path);
+            var directory = new EntryInfo(PathToAuto, path);
             directory.Create();
 
-            var file = new EntryInfo(Root, Auto, path, name);
+            var file = new EntryInfo(PathToAuto, path, name);
             using var fileStream = file.Create();
             await stream.CopyToAsync(fileStream);
 
@@ -78,20 +76,20 @@ namespace LocalCloud.Storage.Core
 
         public void MoveAutoFile(string name, DateTime source, DateTime destination, bool overwrite = true)
         {
-            var sourceEntry = new EntryInfo(Auto, DateRange.GetPath(source), name);
-            var destinationEntry = new EntryInfo(Auto, DateRange.GetPath(destination), name);
+            var sourceEntry = new EntryInfo(PathToAuto, DateRange.GetPath(source), name);
+            var destinationEntry = new EntryInfo(PathToAuto, DateRange.GetPath(destination), name);
 
             File.Move(sourceEntry.RootPath, destinationEntry.RootPath, overwrite);
         }
 
         public void DeleteAuto(string name, DateTime? dateTime = null)
         {
-            var entry = new EntryInfo(Auto, DateRange.GetPath(dateTime), name);
+            var entry = new EntryInfo(PathToAuto, DateRange.GetPath(dateTime), name);
             entry.Delete();
         }
         public bool EntryAutoExists(string name, DateTime? dateTime = null)
         {
-            var entry = new EntryInfo(Auto, DateRange.GetPath(dateTime), name);
+            var entry = new EntryInfo(PathToAuto, DateRange.GetPath(dateTime), name);
             return entry.Exists;
         }
 
@@ -140,86 +138,70 @@ namespace LocalCloud.Storage.Core
                 await CreateFileAsync(path, data.FileStream, FileMode.CreateNew);
                 await data.FileStream.DisposeAsync();
             }
-            files.ForEach(x => _deleteEntry(x));
+            files.ForEach(x => new EntryInfo(Root, x).Delete());
             _removeEmptyDirectories(PathToAuto);
         }
         #endregion
 
-        public FileInfo GetFile(string path, bool withHidden = false)
+        public EntryInfo GetFile(string path, bool withHidden = false)
         {
-            path = _fullPath(path);
-            return File.Exists(path) && (withHidden || !IsHidden(path))
-                ? new FileInfo(path)
+            var entry = new EntryInfo(Root, path);
+            return entry.FileExists && (withHidden || entry.IsHidden)
+                ? entry
                 : throw new FileNotFoundException("File wasn't found!", path);
         }
 
-        public IEnumerable<FileInfo> GetFiles(string path, bool withHidden = false)
+        public IEnumerable<EntryInfo> GetFiles(string path, bool withHidden = false)
         {
-            path = _fullPath(path);
-            var files = Directory.GetFiles(path).Where(x => withHidden || IsHidden(x));
-            foreach (var file in files)
-            {
-                yield return new FileInfo(file);
-            }
+            var entry = new EntryInfo(Root, path);
+            var files = entry.GetEntries().Where(x => x.IsFile && (withHidden || !x.IsHidden));
+            return files;
         }
 
-        public DirectoryInfo GetDirectory(string path, bool withHidden = false)
+        public EntryInfo GetDirectory(string path, bool withHidden = false)
         {
-            path = _fullPath(path);
-            return Directory.Exists(path) && (withHidden || !IsHidden(path))
-                ? new DirectoryInfo(path)
+            var entry = new EntryInfo(Root, path);
+            return entry.DirectoryExists && (withHidden || entry.IsHidden)
+                ? entry
                 : throw new DirectoryNotFoundException($"Directory with a path: `{path}` wasn't found!");
         }
 
-        public IEnumerable<DirectoryInfo> GetDirectories(string path, bool withHidden = false)
+        public IEnumerable<EntryInfo> GetDirectories(string path, bool withHidden = false)
         {
-            path = _fullPath(path);
-            var directories = Directory.GetDirectories(path).Where(x => withHidden || IsHidden(x));
-            foreach (var directory in directories)
-            {
-                yield return new DirectoryInfo(directory);
-            }
+            var entry = new EntryInfo(Root, path);
+            var directories = entry.GetEntries().Where(x => x.IsDirectory && (withHidden || !x.IsHidden));
+            return directories;
         }
 
-        public FileSystemInfo GetSystemEntry(string path, bool withHidden = false)
+        public EntryInfo GetSystemEntry(string path, bool withHidden = false)
         {
-            path = _fullPath(path);
-            return IsDirectory(path) && (withHidden || !IsHidden(path))
-                ? new DirectoryInfo(path)
-                : (FileSystemInfo)new FileInfo(path);
+            var entry = new EntryInfo(Root, path);
+            return withHidden || !entry.IsHidden
+                ? entry
+                : null;
         }
 
-        public IEnumerable<FileSystemInfo> GetSystemEntries(string path = null, bool withHidden = false)
+        public IEnumerable<EntryInfo> GetSystemEntries(string path = null, bool withHidden = false)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
-                path = Root;
-            }
-            else
-            {
-                path = _fullPath(path);
+                path = string.Empty;
             }
 
-            if (!Directory.Exists(path))
+            var directory = new EntryInfo(Root, path);
+            if (!directory.DirectoryExists)
             {
                 yield break;
             }
-            var entries = Directory.GetFileSystemEntries(path)
-                                   .Where(x => !x.StartsWith(PathToBin))
-                                   .OrderByDescending(x => IsDirectory(x));
+
+            var entries = Directory.GetFileSystemEntries(directory.RootPath)
+                                   .Select(x => new EntryInfo(x)).OrderBy(x => !x.IsDirectory);
 
             foreach (var entry in entries)
             {
-                if (withHidden || !IsHidden(entry))
+                if (withHidden || !entry.IsHidden)
                 {
-                    if (IsDirectory(entry))
-                    {
-                        yield return new DirectoryInfo(entry);
-                    }
-                    else
-                    {
-                        yield return new FileInfo(entry);
-                    }
+                    yield return entry;
                 }
             }
         }
@@ -232,61 +214,61 @@ namespace LocalCloud.Storage.Core
             }
         }
 
-        public DirectoryInfo CreateDirectory(string path)
+        public EntryInfo CreateDirectory(string path)
         {
-            path = _fullPath(path);
-            Directory.CreateDirectory(path);
-            return new DirectoryInfo(path);
+            var entry = new EntryInfo(Root, path);
+            entry.Create();
+            return entry;
         }
 
-        public async Task<FileInfo> CreateFileAsync(string path, Stream stream, FileMode fileMode = FileMode.OpenOrCreate)
+        public async Task<FileInfo> CreateFileAsync(string path, Stream stream, FileMode mode = FileMode.OpenOrCreate)
         {
-            path = _fullPath(path);
-            using var fileStream = new FileStream(path, fileMode);
-            await stream.CopyToAsync(fileStream);
+            var entry = new EntryInfo(Root, path);
+            using var entryStream = entry.Create(mode);
+            await entryStream.CopyToAsync(stream);
             return new FileInfo(path);
         }
 
         public void MoveFile(string source, string destination, bool overwrite = true)
         {
-            source = _fullPath(source);
-            destination = _fullPath(destination);
-            File.Move(source, destination, overwrite);
+            var sourceEntry = new EntryInfo(Root, source);
+            var destinationEntry = new EntryInfo(Root, destination);
+            File.Move(sourceEntry.RootPath, destinationEntry.RootPath, overwrite);
         }
 
         public void MoveDirectory(string source, string destination)
         {
-            source = _fullPath(source);
-            destination = _fullPath(destination);
-            Directory.Move(source, destination);
+            var sourceEntry = new EntryInfo(Root, source);
+            var destinationEntry = new EntryInfo(Root, destination);
+            Directory.Move(sourceEntry.RootPath, destinationEntry.RootPath);
         }
 
         public ZipArchive Archive(string source, string destination)
         {
-            destination = _fullPath(destination);
-            if (File.Exists(destination))
+            var destinationEntry = new EntryInfo(destination);
+            if (destinationEntry.FileExists)
             {
-                File.Delete(destination);
+                destinationEntry.Delete();
             }
-            var archive = ZipFile.Open(destination, ZipArchiveMode.Update);
-            var entries = IsDirectory(source)
-                ? _getEntryPaths(source).ToArray()
-                : new[] { _fullPath(source) };
 
-            var sourceDirectory = Path.GetDirectoryName(_fullPath(source));
+            var archive = ZipFile.Open(destination, ZipArchiveMode.Update);
+            var sourceEntry = new EntryInfo(source);
+            var entries = sourceEntry.GetEntries();
+
+            var sourceDirectory = Path.GetDirectoryName(sourceEntry.RootPath);
             foreach (var entry in entries)
             {
-                var archiveEntry = entry.Replace(sourceDirectory, "").TrimStart('\\');
-                if (IsDirectory(entry))
+                var archiveEntry = entry.RootPath.Replace(sourceDirectory, "").TrimStart('\\');
+                if (entry.IsDirectory)
                 {
-                    if (!Directory.EnumerateFileSystemEntries(entry).Any())
+                    if (!Directory.EnumerateFileSystemEntries(entry.RootPath).Any())
                     {
                         archive.CreateEntry($"{archiveEntry}/");
                     }
                 }
                 else
                 {
-                    archive.CreateEntryFromFile(entry, archiveEntry);
+                    archive.CreateEntryFromFile(entry.RootPath, archiveEntry);
                 }
             }
             return archive;
@@ -294,34 +276,28 @@ namespace LocalCloud.Storage.Core
 
         public void Extract(string source, string destination)
         {
-            source = _fullPath(source);
-            destination = _fullPath(destination);
-            ZipFile.ExtractToDirectory(source, destination);
+            var sourceEntry = new EntryInfo(Root, source);
+            var destinationEntry = new EntryInfo(Root, destination);
+            ZipFile.ExtractToDirectory(sourceEntry.RootPath, destinationEntry.RootPath);
         }
 
         public IEnumerable<string> GetEntriesFromBin() => _getEntryPaths(PathToBin).Select(x => Path.GetFileNameWithoutExtension(x));
 
         public string MoveToBin(string path)
         {
-            path = _fullPath(path);
-            if (path.Equals(PathToBin, StringComparison.OrdinalIgnoreCase))
+            var entry = new EntryInfo(Root, path);
+            if (Bin.Equals(entry))
             {
-                throw new ArgumentException($"The system folder `{Bin}` cannot be deleted manually!", nameof(path));
+                throw new ArgumentException($"The system folder `{PathToBin}` cannot be deleted manually!", nameof(path));
             }
 
-            if (IsDirectory(path))
+            if (!entry.DirectoryExists)
             {
-                if (!Directory.Exists(path))
-                {
-                    throw new DirectoryNotFoundException("Directory wasn't found!");
-                }
+                throw new DirectoryNotFoundException("Directory wasn't found!");
             }
-            else
+            else if (!entry.FileExists)
             {
-                if (!File.Exists(path))
-                {
-                    throw new FileNotFoundException("File wasn't found!", path);
-                }
+                throw new FileNotFoundException("File wasn't found!", path);
             }
 
             var directoryInfo = new DirectoryInfo(path);
@@ -332,13 +308,13 @@ namespace LocalCloud.Storage.Core
 
             var metaData = new Metadata(directoryInfo, Path.GetDirectoryName(path));
             var metaDataString = JsonConvert.SerializeObject(metaData);
-            var sourceDirectory = Path.GetDirectoryName(_fullPath(path));
+            var sourceDirectory = Path.GetDirectoryName(entry.RootPath);
             var metaPath = Path.Combine(sourceDirectory, Meta);
             File.WriteAllText(metaPath, metaDataString);
             archive.CreateEntryFromFile(metaPath, Meta);
             File.Delete(metaPath);
 
-            _deleteEntry(path);
+            entry.Delete();
             archive.Dispose();
             return name;
         }
@@ -458,50 +434,6 @@ namespace LocalCloud.Storage.Core
                 }
             }
         }
-
-        //private string _fullPath(string part)
-        //{
-        //    part ??= string.Empty;
-        //    return part.IndexOf(Root) == 0 ? part : Path.Combine(Root, part);
-        //}
-        //private void _hideEntry(FileSystemInfo systemInfo) => systemInfo.Attributes |= FileAttributes.Hidden;
-        //private void _deleteEntry(string path)
-        //{
-        //    path = _fullPath(path);
-        //    if (IsDirectory(path))
-        //    {
-        //        _deleteDirectory(path);
-        //    }
-        //    else
-        //    {
-        //        GetSystemEntry(path).Delete();
-        //    }
-        //}
-        //private void _deleteDirectory(string path)
-        //{
-        //    path = _fullPath(path);
-        //    var files = Directory.GetFiles(path);
-        //    var directories = Directory.GetDirectories(path);
-
-        //    foreach (var file in files)
-        //    {
-        //        File.SetAttributes(file, FileAttributes.Normal);
-        //        File.Delete(file);
-        //    }
-
-        //    foreach (var directory in directories)
-        //    {
-        //        _deleteDirectory(directory);
-        //    }
-
-        //    Directory.Delete(path);
-        //}
-        //private bool _entryHasFlag(string path, FileAttributes fileAttributes)
-        //{
-        //    path = _fullPath(path);
-        //    var fileSystemInfo = IsDirectory(path) ? new DirectoryInfo(path) : (FileSystemInfo)new FileInfo(path);
-        //    return fileSystemInfo.Attributes.HasFlag(fileAttributes);
-        //}
         #endregion
     }
 }
